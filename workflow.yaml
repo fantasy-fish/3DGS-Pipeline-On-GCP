@@ -1,0 +1,48 @@
+main:
+  params: [event]
+  steps:
+    - initializeWorkflow:
+        assign:
+          - input_data: ${event.data}
+          - callback_token: ${sys.get_env("GOOGLE_CLOUD_WORKFLOW_EXECUTION_ID")}
+
+    - callRunMeshroom:
+        call: http.post
+        args:
+          url: https://run-meshroom-916160520859.us-central1.run.app/extract-mesh
+          auth:
+            type: OIDC
+          body:
+            input: ${input_data}
+            callback_token: ${callback_token}
+        result: run_meshroom_call
+
+    - waitForRunMeshroom:
+        call: sys.sleep
+        args:
+          seconds: 60
+
+    - checkRunMeshroomStatus:
+        call: http.get
+        args:
+          url: https://run-meshroom-916160520859.us-central1.run.app/status
+          query:
+            callback_token: ${callback_token}
+          auth:
+            type: OIDC
+        result: run_meshroom_status
+
+    - processRunMeshroomResult:
+        switch:
+          - condition: ${run_meshroom_status.body.status == "COMPLETED"}
+            next: returnResult
+          - condition: ${run_meshroom_status.body.status == "FAILED"}
+            next: handleError
+          - condition: ${run_meshroom_status.body.status == "PROCESSING"}
+            next: waitForRunMeshroom
+
+    - returnResult:
+        return: ${run_meshroom_status.body.output}
+
+    - handleError:
+        return: "An error occurred during processing"

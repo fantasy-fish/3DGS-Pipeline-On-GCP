@@ -1,0 +1,12 @@
+steps:
+# Build the Docker image
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['build', '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/threed-reconstruction/glomap-preprocess-image', '.']
+
+# Push the image to Container Registry
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['push', 'us-central1-docker.pkg.dev/$PROJECT_ID/threed-reconstruction/glomap-preprocess-image']
+
+# Store images in Google Container Registry
+images:
+- 'us-central1-docker.pkg.dev/$PROJECT_ID/gs-pipeline/glomap-preprocess-image'

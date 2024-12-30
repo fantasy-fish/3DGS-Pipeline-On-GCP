@@ -1,0 +1,120 @@
+main:
+  params: [event]
+  steps:
+    - initializeWorkflow:
+        assign:
+          - input_data: ${event.data}
+          - callback_token: ${sys.get_env("GOOGLE_CLOUD_WORKFLOW_EXECUTION_ID")}
+
+    - callPreprocess:
+        call: http.post
+        args:
+          url: https://glomap-preprocess-916160520859.us-central1.run.app/preprocess-video
+          auth:
+            type: OIDC
+          body:
+            input: ${input_data}
+            callback_token: ${callback_token}
+        result: preprocess_call
+
+    - waitForPreprocess:
+        call: sys.sleep
+        args:
+          seconds: 60
+        next: checkPreprocessStatus
+        
+    - checkPreprocessStatus:
+        call: http.get
+        args:
+          url: https://glomap-preprocess-916160520859.us-central1.run.app/status
+          query:
+            callback_token: ${callback_token}
+          auth:
+            type: OIDC
+        result: preprocess_status
+
+    - processPreprocessResult:
+        switch:
+          - condition: ${preprocess_status.body.status == "COMPLETED"}
+            next: callDepthEstimate
+          - condition: ${preprocess_status.body.status == "FAILED"}
+            next: handleError
+          - condition: ${preprocess_status.body.status == "PROCESSING"}
+            next: waitForPreprocess
+
+    - callDepthEstimate:
+        call: http.post
+        args:
+          url: https://depth-estimate-916160520859.us-central1.run.app/preprocess-depth
+          auth:
+            type: OIDC
+          body:
+            input: ${input_data}
+            callback_token: ${callback_token}
+        result: depth_estimate_call
+
+    - waitForDepthEstimate:
+        call: sys.sleep
+        args:
+          seconds: 60
+        next: checkDepthEstimateStatus
+
+    - checkDepthEstimateStatus:
+        call: http.get
+        args:
+          url: https://depth-estimate-916160520859.us-central1.run.app/status
+          query:
+            callback_token: ${callback_token}
+          auth:
+            type: OIDC
+        result: depth_estimate_status
+
+    - processDepthEstimateResult:
+        switch:
+          - condition: ${depth_estimate_status.body.status == "COMPLETED"}
+            next: callRun3dgs
+          - condition: ${depth_estimate_status.body.status == "FAILED"}
+            next: handleError
+          - condition: ${depth_estimate_status.body.status == "PROCESSING"}
+            next: waitForDepthEstimate
+
+    - callRun3dgs:
+        call: http.post
+        args:
+          url: https://run-3dgs-916160520859.us-central1.run.app/run-3dgs
+          auth:
+            type: OIDC
+          body:
+            input: ${input_data}
+            callback_token: ${callback_token}
+        result: run_3dgs_call
+
+    - waitForRun3dgs:
+        call: sys.sleep
+        args:
+          seconds: 60
+
+    - checkRun3dgsStatus:
+        call: http.get
+        args:
+          url: https://run-3dgs-916160520859.us-central1.run.app/status
+          query:
+            callback_token: ${callback_token}
+          auth:
+            type: OIDC
+        result: run_3dgs_status
+
+    - process3dgsResult:
+        switch:
+          - condition: ${run_3dgs_status.body.status == "COMPLETED"}
+            next: returnResult
+          - condition: ${run_3dgs_status.body.status == "FAILED"}
+            next: handleError
+          - condition: ${run_3dgs_status.body.status == "PROCESSING"}
+            next: waitForRun3dgs
+
+    - returnResult:
+        return: ${run_3dgs_status.body.output}
+
+    - handleError:
+        return: "An error occurred during processing"

@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+google-cloud-logging
+Pillow
+python-multipart
+opencv-python==4.5.5.64

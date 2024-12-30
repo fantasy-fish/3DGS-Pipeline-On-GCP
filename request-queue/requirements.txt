@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+google-cloud-pubsub
+google-cloud-storage
+google-cloud-logging
+pydantic
+redis 

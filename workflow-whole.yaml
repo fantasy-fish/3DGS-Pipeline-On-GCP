@@ -1,0 +1,259 @@
+main:
+  params: [event]
+  steps:
+    - init:
+        assign:
+          - decoded_data: ${json.decode(base64.decode(event.data.message.data))}
+          - request_id: ${decoded_data.session_id}
+
+    - logData:
+        call: sys.log
+        args:
+          text: '${"Request ID: " + request_id}'
+          severity: INFO
+          
+    - runPreprocess:
+        call: preprocess_workflow
+        args:
+          request_id: ${request_id}
+        result: preprocess_result
+
+    - runParallelWorkflows:
+        parallel:
+          shared: []
+          branches:
+            - run3DGS:
+                steps:
+                  - call3DGS:
+                      call: gs_workflow
+                      args:
+                        request_id: ${request_id}
+            - runMeshroom:
+                steps:
+                  - callMeshroom:
+                      call: meshroom_workflow
+                      args:
+                        request_id: ${request_id}
+
+    - returnResult:
+        return: ${request_id}
+
+preprocess_workflow:
+  params: [request_id]
+  steps:
+    - initializeWorkflow:
+        assign:
+          - callback_token: ${sys.get_env("GOOGLE_CLOUD_WORKFLOW_EXECUTION_ID")}
+
+    - callImageFilter:
+        call: http.post
+        args:
+          url: https://image-filter-916160520859.us-central1.run.app/filter-image
+          auth:
+            type: OIDC
+          body:
+            callback_token: ${callback_token}
+            request_id: ${request_id}
+        result: image_filter_call
+
+    - waitForImageFilter:
+        call: sys.sleep
+        args:
+          seconds: 30
+
+    - checkImageFilterStatus:
+        call: http.get
+        args:
+          url: https://image-filter-916160520859.us-central1.run.app/status
+          query:
+            callback_token: ${callback_token}
+            request_id: ${request_id}
+          auth:
+            type: OIDC
+        result: image_filter_status
+
+    - processImageFilterResult:
+        switch:
+          - condition: ${image_filter_status.body.status == "COMPLETED"}
+            next: callGlomapPreprocess
+          - condition: ${image_filter_status.body.status == "FAILED"}
+            next: handleError
+          - condition: ${image_filter_status.body.status == "PROCESSING"}
+            next: waitForImageFilter
+
+    - callGlomapPreprocess:
+        call: http.post
+        args:
+          url: https://glomap-preprocess-916160520859.us-central1.run.app/preprocess-glomap
+          auth:
+            type: OIDC
+          body:
+            callback_token: ${callback_token}
+            request_id: ${request_id}
+        result: glomap_preprocess_call
+
+    - waitForGlomapPreprocess:
+        call: sys.sleep
+        args:
+          seconds: 30
+
+    - checkGlomapPreprocessStatus:
+        call: http.get
+        args:
+          url: https://glomap-preprocess-916160520859.us-central1.run.app/status
+          query:
+            callback_token: ${callback_token}
+            request_id: ${request_id}
+          auth:
+            type: OIDC
+        result: glomap_preprocess_status
+
+    - processGlomapPreprocessResult:
+        switch:
+          - condition: ${glomap_preprocess_status.body.status == "COMPLETED"}
+            next: returnResult
+          - condition: ${glomap_preprocess_status.body.status == "FAILED"}
+            next: handleError
+          - condition: ${glomap_preprocess_status.body.status == "PROCESSING"}
+            next: waitForGlomapPreprocess
+
+    - returnResult:
+        return: ${glomap_preprocess_status.body}
+
+    - handleError:
+        return: "An error occurred during preprocessing"
+
+meshroom_workflow:
+  params: [request_id]
+  steps:
+    - initializeWorkflow:
+        assign:
+          - callback_token: ${sys.get_env("GOOGLE_CLOUD_WORKFLOW_EXECUTION_ID")}
+
+    - callRunMeshroom:
+        call: http.post
+        args:
+          url: https://run-meshroom-916160520859.us-central1.run.app/extract-mesh
+          auth:
+            type: OIDC
+          body:
+            callback_token: ${callback_token}
+            request_id: ${request_id}
+        result: run_meshroom_call
+
+    - waitForRunMeshroom:
+        call: sys.sleep
+        args:
+          seconds: 60
+
+    - checkRunMeshroomStatus:
+        call: http.get
+        args:
+          url: https://run-meshroom-916160520859.us-central1.run.app/status
+          query:
+            callback_token: ${callback_token}
+            request_id: ${request_id}
+          auth:
+            type: OIDC
+        result: run_meshroom_status
+
+    - processRunMeshroomResult:
+        switch:
+          - condition: ${run_meshroom_status.body.status == "COMPLETED"}
+            next: returnResult
+          - condition: ${run_meshroom_status.body.status == "FAILED"}
+            next: handleError
+          - condition: ${run_meshroom_status.body.status == "PROCESSING"}
+            next: waitForRunMeshroom
+
+    - returnResult:
+        return: ${run_meshroom_status.body}
+
+    - handleError:
+        return: "An error occurred during Meshroom processing"
+
+gs_workflow:
+  params: [request_id]
+  steps:
+    - initializeWorkflow:
+        assign:
+          - callback_token: ${sys.get_env("GOOGLE_CLOUD_WORKFLOW_EXECUTION_ID")}
+
+    - callDepthEstimate:
+        call: http.post
+        args:
+          url: https://depth-estimate-916160520859.us-central1.run.app/estimate-depth
+          auth:
+            type: OIDC
+          body:
+            callback_token: ${callback_token}
+            request_id: ${request_id}
+        result: depth_estimate_call
+
+    - waitForDepthEstimate:
+        call: sys.sleep
+        args:
+          seconds: 60
+        next: checkDepthEstimateStatus
+
+    - checkDepthEstimateStatus:
+        call: http.get
+        args:
+          url: https://depth-estimate-916160520859.us-central1.run.app/status
+          query:
+            callback_token: ${callback_token}
+            request_id: ${request_id}
+          auth:
+            type: OIDC
+        result: depth_estimate_status
+
+    - processDepthEstimateResult:
+        switch:
+          - condition: ${depth_estimate_status.body.status == "COMPLETED"}
+            next: callRun3dgs
+          - condition: ${depth_estimate_status.body.status == "FAILED"}
+            next: handleError
+          - condition: ${depth_estimate_status.body.status == "PROCESSING"}
+            next: waitForDepthEstimate
+
+    - callRun3dgs:
+        call: http.post
+        args:
+          url: https://run-3dgs-916160520859.us-central1.run.app/run-3dgs
+          auth:
+            type: OIDC
+          body:
+            callback_token: ${callback_token}
+            request_id: ${request_id}
+        result: run_3dgs_call
+
+    - waitForRun3dgs:
+        call: sys.sleep
+        args:
+          seconds: 60
+
+    - checkRun3dgsStatus:
+        call: http.get
+        args:
+          url: https://run-3dgs-916160520859.us-central1.run.app/status
+          query:
+            callback_token: ${callback_token}
+            request_id: ${request_id}
+          auth:
+            type: OIDC
+        result: run_3dgs_status
+
+    - process3dgsResult:
+        switch:
+          - condition: ${run_3dgs_status.body.status == "COMPLETED"}
+            next: returnResult
+          - condition: ${run_3dgs_status.body.status == "FAILED"}
+            next: handleError
+          - condition: ${run_3dgs_status.body.status == "PROCESSING"}
+            next: waitForRun3dgs
+
+    - returnResult:
+        return: ${run_3dgs_status.body}
+
+    - handleError:
+        return: "An error occurred during 3DGS processing"
